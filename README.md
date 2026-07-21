@@ -6,14 +6,17 @@ Claude Code 標準の `AskUserQuestion` の拡張版 MCP サーバーです。
 
 ## セットアップ
 
+npm パッケージとして公開されているので、Claude Code へはインストール不要で登録できます:
+
+```bash
+claude mcp add ask-user-question -- npx -y ask-user-question-mcp-server
+```
+
+### ソースから使う場合
+
 ```bash
 npm install
 npm run build
-```
-
-Claude Code への登録:
-
-```bash
 claude mcp add ask-user-question -- node /path/to/askUserQuestionMCPServer/dist/index.js
 ```
 
