@@ -1,15 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import type { AddressInfo } from "node:net";
-import type { Question } from "./parser.js";
-
-export interface Answer {
-  question: string;
-  /** Selected option labels (or the free-text answer for text questions) */
-  answers: string[];
-  /** Free text entered in the "Other" field, if any */
-  other?: string;
-}
+import type { Answer, Question } from "./schemas.js";
 
 const OTHER_VALUE = "__other__";
 
@@ -21,7 +13,7 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderPage(questions: Question[]): string {
+export function renderPage(questions: Question[]): string {
   const blocks = questions
     .map((q, qi) => {
       const desc = q.description
@@ -100,6 +92,30 @@ ${blocks}
 </html>`;
 }
 
+/** Decode a submitted form body into one Answer per question. */
+export function decodeAnswers(
+  questions: Question[],
+  params: URLSearchParams
+): Answer[] {
+  return questions.map((q, qi) => {
+    if (q.options.length === 0) {
+      const text = (params.get(`q${qi}_text`) ?? "").trim();
+      return { question: q.question, answers: text ? [text] : [] };
+    }
+    const selected = params.getAll(`q${qi}`);
+    const labels = selected
+      .filter((v) => v !== OTHER_VALUE)
+      .map((v) => q.options[Number(v)]?.label)
+      .filter((v): v is string => Boolean(v));
+    const answer: Answer = { question: q.question, answers: labels };
+    if (selected.includes(OTHER_VALUE)) {
+      const other = (params.get(`q${qi}_other`) ?? "").trim();
+      answer.other = other || "(その他: 記述なし)";
+    }
+    return answer;
+  });
+}
+
 function openBrowser(url: string): void {
   if (process.env.ASK_USER_QUESTION_NO_OPEN) return;
   const cmd =
@@ -134,24 +150,7 @@ export function collectAnswers(
         let body = "";
         req.on("data", (c) => (body += c));
         req.on("end", () => {
-          const params = new URLSearchParams(body);
-          const answers: Answer[] = questions.map((q, qi) => {
-            if (q.options.length === 0) {
-              const text = (params.get(`q${qi}_text`) ?? "").trim();
-              return { question: q.question, answers: text ? [text] : [] };
-            }
-            const selected = params.getAll(`q${qi}`);
-            const labels = selected
-              .filter((v) => v !== OTHER_VALUE)
-              .map((v) => q.options[Number(v)]?.label)
-              .filter((v): v is string => Boolean(v));
-            const answer: Answer = { question: q.question, answers: labels };
-            if (selected.includes(OTHER_VALUE)) {
-              const other = (params.get(`q${qi}_other`) ?? "").trim();
-              answer.other = other || "(その他: 記述なし)";
-            }
-            return answer;
-          });
+          const answers = decodeAnswers(questions, new URLSearchParams(body));
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           res.end(
             `<!doctype html><html lang="ja"><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h1>回答を送信しました</h1><p>このタブは閉じて構いません。</p></body></html>`

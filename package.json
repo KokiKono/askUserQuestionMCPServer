@@ -1,7 +1,7 @@
 {
   "name": "ask-user-question-mcp-server",
-  "version": "0.1.0",
-  "description": "Extended AskUserQuestion as an MCP server: accepts unlimited questions in markdown format and collects answers via a local web UI",
+  "version": "0.2.0",
+  "description": "Extended AskUserQuestion as an MCP server: accepts unlimited structured questions and collects answers via a local web UI",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -9,9 +9,10 @@
   },
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
+    "clean": "rm -rf dist",
     "start": "node dist/index.js",
-    "test": "node --test dist/parser.test.js"
+    "test": "node --test \"dist/**/*.test.js\""
   },
   "engines": {
     "node": ">=18"
