@@ -83,6 +83,86 @@ test("decodeAnswers: ignores out-of-range option indexes", () => {
   ]);
 });
 
+test("decodeAnswers: textInput option captures per-option text", () => {
+  const questions = q([
+    {
+      question: "格上げしますか?",
+      options: [
+        { label: "格上げする", textInput: { placeholder: "出所URL", required: true } },
+        { label: "据え置き" },
+      ],
+    },
+  ]);
+  const answers = decodeAnswers(
+    questions,
+    new URLSearchParams("q0=0&q0_opt0_text=https%3A%2F%2Fexample.com%2Fissues%2F123")
+  );
+  assert.deepEqual(answers, [
+    {
+      question: "格上げしますか?",
+      answers: ["格上げする"],
+      optionTexts: { "格上げする": "https://example.com/issues/123" },
+    },
+  ]);
+});
+
+test("decodeAnswers: textInput text is ignored when its option is not selected", () => {
+  const questions = q([
+    {
+      question: "格上げしますか?",
+      options: [
+        { label: "格上げする", textInput: {} },
+        { label: "据え置き" },
+      ],
+    },
+  ]);
+  const answers = decodeAnswers(
+    questions,
+    new URLSearchParams("q0=1&q0_opt0_text=stale")
+  );
+  assert.deepEqual(answers, [{ question: "格上げしますか?", answers: ["据え置き"] }]);
+});
+
+test("decodeAnswers: multi-select collects texts from multiple textInput options", () => {
+  const questions = q([
+    {
+      question: "対応方針は?",
+      multiSelect: true,
+      options: [
+        { label: "修正", textInput: { placeholder: "PR URL" } },
+        { label: "起票", textInput: { placeholder: "チケット" } },
+        { label: "無視" },
+      ],
+    },
+  ]);
+  const answers = decodeAnswers(
+    questions,
+    new URLSearchParams("q0=0&q0=1&q0_opt0_text=pr-1&q0_opt1_text=JIRA-2")
+  );
+  assert.deepEqual(answers, [
+    {
+      question: "対応方針は?",
+      answers: ["修正", "起票"],
+      optionTexts: { 修正: "pr-1", 起票: "JIRA-2" },
+    },
+  ]);
+});
+
+test("renderPage renders textInput field with placeholder and required marker", () => {
+  const questions = q([
+    {
+      question: "格上げしますか?",
+      options: [
+        { label: "格上げする", textInput: { placeholder: "出所URL", required: true } },
+      ],
+    },
+  ]);
+  const html = renderPage(questions);
+  assert.ok(html.includes('name="q0_opt0_text"'));
+  assert.ok(html.includes('placeholder="出所URL"'));
+  assert.ok(html.includes('data-required="1"'));
+});
+
 test("renderPage escapes HTML in questions and options", () => {
   const questions = q([
     {

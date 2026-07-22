@@ -36,9 +36,11 @@ claude mcp add ask-user-question -- node /path/to/askUserQuestionMCPServer/dist/
 | `question` | string (必須) | 質問文 (見出しとして表示) |
 | `description` | string (任意) | 質問の補足説明 |
 | `multiSelect` | boolean (任意, デフォルト false) | 複数選択を許可 (チェックボックス表示) |
-| `options` | array (任意) | 選択肢 `{ label, description? }` の配列。省略すると **自由記述** (テキストエリア) になる |
+| `options` | array (任意) | 選択肢 `{ label, description?, textInput? }` の配列。省略すると **自由記述** (テキストエリア) になる |
 
 すべての選択式設問に「その他 (自由記述)」が自動で追加されます。
+
+選択肢の `textInput` (`{ placeholder?, required? }`) を指定すると、**その選択肢を選んだときだけ有効な自由記述欄**が付きます。「格上げする → 出所URLをその場で記入」のように、追加の詳細を同じ1コールで回収できます。`required: true` なら未記入のまま送信できません。
 
 ### リクエスト例
 
@@ -63,6 +65,16 @@ claude mcp add ask-user-question -- node /path/to/askUserQuestionMCPServer/dist/
         { "label": "検索" }
       ]
     },
+    {
+      "question": "この指摘を格上げしますか?",
+      "options": [
+        {
+          "label": "格上げする",
+          "textInput": { "placeholder": "出所URL / チケット番号", "required": true }
+        },
+        { "label": "据え置き" }
+      ]
+    },
     { "question": "その他補足があれば教えてください" }
   ],
   "timeoutSeconds": 600
@@ -78,6 +90,11 @@ claude mcp add ask-user-question -- node /path/to/askUserQuestionMCPServer/dist/
   "answers": [
     { "question": "デプロイ先はどこにしますか?", "answers": ["AWS"] },
     { "question": "使いたい機能はどれですか?", "answers": ["認証", "検索"], "other": "CSV エクスポート" },
+    {
+      "question": "この指摘を格上げしますか?",
+      "answers": ["格上げする"],
+      "optionTexts": { "格上げする": "https://example.com/issues/123" }
+    },
     { "question": "その他補足があれば教えてください", "answers": ["特になし"] }
   ]
 }
@@ -85,6 +102,7 @@ claude mcp add ask-user-question -- node /path/to/askUserQuestionMCPServer/dist/
 
 - `answers` — 選択したラベルの配列。自由記述設問は回答テキスト1要素の配列。未回答なら空配列
 - `other` — 「その他」を選んだ場合のみ存在する自由記述テキスト
+- `optionTexts` — `textInput` 付き選択肢を選んで記入した場合のみ存在する、`{ 選択肢ラベル: 記入テキスト }` のマップ
 
 タイムアウト時は `isError` 付きのエラーメッセージを返します。
 

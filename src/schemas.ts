@@ -12,6 +12,25 @@ export const OptionSchema = z
       .max(2000, "Option description must not exceed 2000 characters")
       .optional()
       .describe("Optional supplementary explanation shown under the label."),
+    textInput: z
+      .object({
+        placeholder: z
+          .string()
+          .max(200, "Placeholder must not exceed 200 characters")
+          .optional()
+          .describe("Placeholder text shown in the input field."),
+        required: z
+          .boolean()
+          .default(false)
+          .describe("Require the text to be filled in when this option is selected."),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Attach a free-text field to this option, shown when it is selected. " +
+          "Use to collect follow-up details in the same call " +
+          "(e.g. option 'Escalate' with textInput asking for the source URL)."
+      ),
   })
   .strict();
 
@@ -70,6 +89,13 @@ export const AnswerSchema = z
       .string()
       .optional()
       .describe('Free text the user entered in the "Other" field, if they chose it.'),
+    optionTexts: z
+      .record(z.string())
+      .optional()
+      .describe(
+        "Text entered for selected options that declared textInput, keyed by option label. " +
+          "Present only when at least one such text was entered."
+      ),
   })
   .strict();
 

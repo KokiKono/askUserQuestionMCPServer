@@ -25,20 +25,25 @@ export function renderPage(questions: Question[]): string {
       } else {
         const type = q.multiSelect ? "checkbox" : "radio";
         const opts = q.options
-          .map(
-            (o, oi) => `
+          .map((o, oi) => {
+            const textInput = o.textInput
+              ? `
+            <input type="text" name="q${qi}_opt${oi}_text" class="inline-text"
+              placeholder="${escapeHtml(o.textInput.placeholder ?? "自由記述")}"${o.textInput.required ? ' data-required="1"' : ""}>`
+              : "";
+            return `
           <label class="opt">
             <input type="${type}" name="q${qi}" value="${oi}">
             <span class="opt-label">${escapeHtml(o.label)}</span>
-            ${o.description ? `<span class="opt-desc">${escapeHtml(o.description)}</span>` : ""}
-          </label>`
-          )
+            ${o.description ? `<span class="opt-desc">${escapeHtml(o.description)}</span>` : ""}${textInput}
+          </label>`;
+          })
           .join("");
         body = `${opts}
           <label class="opt">
             <input type="${type}" name="q${qi}" value="${OTHER_VALUE}">
             <span class="opt-label">その他</span>
-            <input type="text" name="q${qi}_other" class="other-text" placeholder="自由記述">
+            <input type="text" name="q${qi}_other" class="inline-text" placeholder="自由記述">
           </label>`;
       }
       return `<fieldset>
@@ -66,7 +71,8 @@ export function renderPage(questions: Question[]): string {
   .opt:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
   .opt-label { font-weight: 600; margin-left: .25rem; }
   .opt-desc { display: block; margin-left: 1.7rem; font-size: .9em; opacity: .75; }
-  .other-text { margin-left: .5rem; width: 60%; }
+  .inline-text { display: block; margin: .25rem 0 0 1.7rem; width: 60%; }
+  .inline-text.missing { border-color: #e5484d; outline: 1px solid #e5484d; }
   textarea, input[type="text"] { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
   textarea { width: 100%; box-sizing: border-box; }
   button { font: inherit; font-weight: 700; padding: .6rem 2rem; border-radius: 8px; border: none; background: #4f6ef7; color: #fff; cursor: pointer; }
@@ -80,12 +86,26 @@ ${blocks}
 <button type="submit">回答を送信</button>
 </form>
 <script>
-  // Selecting the "other" text field checks its radio/checkbox automatically
-  document.querySelectorAll('.other-text').forEach(t => {
+  // Focusing an inline text field checks its radio/checkbox automatically
+  document.querySelectorAll('.inline-text').forEach(t => {
     t.addEventListener('focus', () => {
       const input = t.closest('label').querySelector('input[type=radio],input[type=checkbox]');
       if (input) input.checked = true;
     });
+  });
+  // Block submission while a selected option's required text is empty
+  document.querySelector('form').addEventListener('submit', e => {
+    let firstMissing = null;
+    document.querySelectorAll('.inline-text[data-required]').forEach(t => {
+      const checked = t.closest('label').querySelector('input[type=radio],input[type=checkbox]').checked;
+      const missing = checked && !t.value.trim();
+      t.classList.toggle('missing', missing);
+      if (missing && !firstMissing) firstMissing = t;
+    });
+    if (firstMissing) {
+      e.preventDefault();
+      firstMissing.focus();
+    }
   });
 </script>
 </body>
@@ -108,6 +128,15 @@ export function decodeAnswers(
       .map((v) => q.options[Number(v)]?.label)
       .filter((v): v is string => Boolean(v));
     const answer: Answer = { question: q.question, answers: labels };
+    const optionTexts: Record<string, string> = {};
+    for (const v of selected) {
+      const oi = Number(v);
+      const opt = q.options[oi];
+      if (!opt?.textInput) continue;
+      const text = (params.get(`q${qi}_opt${oi}_text`) ?? "").trim();
+      if (text) optionTexts[opt.label] = text;
+    }
+    if (Object.keys(optionTexts).length > 0) answer.optionTexts = optionTexts;
     if (selected.includes(OTHER_VALUE)) {
       const other = (params.get(`q${qi}_other`) ?? "").trim();
       answer.other = other || "(その他: 記述なし)";

@@ -31,9 +31,13 @@ Args:
       - question (string): The question text.
       - description (string, optional): Supplementary context shown under the question.
       - multiSelect (boolean, default false): Allow selecting multiple options.
-      - options (array, default []): Choices as { label, description? }. Omit to make
-        the question free-text (a textarea). Choice questions automatically get an
-        "Other (free text)" option.
+      - options (array, default []): Choices as { label, description?, textInput? }.
+        Omit to make the question free-text (a textarea). Choice questions
+        automatically get an "Other (free text)" option.
+        textInput ({ placeholder?, required? }) attaches a free-text field that is
+        shown when the option is selected — use it to collect follow-up details in
+        the SAME call instead of asking a separate question later (e.g. option
+        "Escalate" with textInput { placeholder: "Source URL", required: true }).
   - timeoutSeconds (integer, default 600): How long to wait for the user.
 
 Returns (structured):
@@ -42,7 +46,9 @@ Returns (structured):
       {
         "question": string,     // The question text, same order as input
         "answers": string[],    // Selected labels, or [free-text answer]; [] if unanswered
-        "other": string         // Present only if the user chose "Other"
+        "other": string,        // Present only if the user chose "Other"
+        "optionTexts": object   // Present only if selected options had textInput:
+                                // { "<option label>": "<entered text>" }
       }
     ]
   }
@@ -50,6 +56,8 @@ Returns (structured):
 Examples:
   - Use when: You have 6 design decisions to confirm at once -> one call with 6 questions
   - Use when: A choice has 10 candidate libraries -> one question with 10 options
+  - Use when: An answer needs a follow-up detail -> attach textInput to that option
+    instead of a second round-trip
   - Don't use when: A single question with <=4 options suffices (prefer the built-in tool)
 
 Error handling:
