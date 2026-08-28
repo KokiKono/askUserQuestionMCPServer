@@ -83,7 +83,7 @@ export function renderPage(questions: Question[]): string {
 <h1>質問への回答 (${questions.length}問)</h1>
 <form method="POST" action="/submit">
 ${blocks}
-<button type="submit">回答を送信</button>
+<button type="button" id="submit-btn">回答を送信</button>
 </form>
 <script>
   // Focusing an inline text field checks its radio/checkbox automatically
@@ -93,8 +93,15 @@ ${blocks}
       if (input) input.checked = true;
     });
   });
+  const form = document.querySelector('form');
+  // Enter must never submit: confirming an IME conversion (Japanese input)
+  // fires a keydown that would otherwise trigger implicit form submission.
+  // Only the send button submits.
+  form.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') e.preventDefault();
+  });
   // Block submission while a selected option's required text is empty
-  document.querySelector('form').addEventListener('submit', e => {
+  function validate() {
     let firstMissing = null;
     document.querySelectorAll('.inline-text[data-required]').forEach(t => {
       const checked = t.closest('label').querySelector('input[type=radio],input[type=checkbox]').checked;
@@ -103,9 +110,17 @@ ${blocks}
       if (missing && !firstMissing) firstMissing = t;
     });
     if (firstMissing) {
-      e.preventDefault();
       firstMissing.focus();
+      return false;
     }
+    return true;
+  }
+  // form.submit() skips the submit event, so validation lives in the click handler
+  document.getElementById('submit-btn').addEventListener('click', () => {
+    if (validate()) form.submit();
+  });
+  form.addEventListener('submit', e => {
+    if (!validate()) e.preventDefault();
   });
 </script>
 </body>
