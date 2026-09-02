@@ -13,7 +13,12 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function renderPage(questions: Question[]): string {
+/**
+ * Render the question fieldsets and send button for one round.
+ * Served on its own so an already-open tab can swap in the next round
+ * without a page load.
+ */
+export function renderForm(questions: Question[], roundId = 1): string {
   const blocks = questions
     .map((q, qi) => {
       const desc = q.description
@@ -24,8 +29,16 @@ export function renderPage(questions: Question[]): string {
         body = `<textarea name="q${qi}_text" rows="3" placeholder="回答を入力してください"></textarea>`;
       } else {
         const type = q.multiSelect ? "checkbox" : "radio";
+        // A single-select question can only honour the first recommendation.
+        let singleTaken = false;
         const opts = q.options
           .map((o, oi) => {
+            let checked = "";
+            if (o.recommended && (q.multiSelect || !singleTaken)) {
+              checked = " checked";
+              singleTaken = true;
+            }
+            const badge = o.recommended ? ' <span class="rec">推奨</span>' : "";
             const textInput = o.textInput
               ? `
             <input type="text" name="q${qi}_opt${oi}_text" class="inline-text"
@@ -33,8 +46,8 @@ export function renderPage(questions: Question[]): string {
               : "";
             return `
           <label class="opt">
-            <input type="${type}" name="q${qi}" value="${oi}">
-            <span class="opt-label">${escapeHtml(o.label)}</span>
+            <input type="${type}" name="q${qi}" value="${oi}"${checked}>
+            <span class="opt-label">${escapeHtml(o.label)}</span>${badge}
             ${o.description ? `<span class="opt-desc">${escapeHtml(o.description)}</span>` : ""}${textInput}
           </label>`;
           })
@@ -54,6 +67,20 @@ export function renderPage(questions: Question[]): string {
     })
     .join("\n");
 
+  return `<h1>質問への回答 (${questions.length}問)</h1>
+<form id="answer-form" data-round="${roundId}">
+${blocks}
+<button type="button" id="submit-btn">回答を送信</button>
+</form>`;
+}
+
+const WAITING_HTML = `<div class="waiting">
+  <h1>回答を送信しました</h1>
+  <p>このタブは開いたままにしてください。次の質問はここに表示されます。</p>
+</div>`;
+
+/** The page shell: static across rounds, so only its contents are swapped. */
+function renderShell(inner: string): string {
   return `<!doctype html>
 <html lang="ja">
 <head>
@@ -71,39 +98,37 @@ export function renderPage(questions: Question[]): string {
   .opt:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
   .opt-label { font-weight: 600; margin-left: .25rem; }
   .opt-desc { display: block; margin-left: 1.7rem; font-size: .9em; opacity: .75; }
+  .rec { font-size: .75em; font-weight: 700; padding: .1rem .4rem; border-radius: 999px; background: #4f6ef7; color: #fff; vertical-align: .1em; }
   .inline-text { display: block; margin: .25rem 0 0 1.7rem; width: 60%; }
   .inline-text.missing { border-color: #e5484d; outline: 1px solid #e5484d; }
   textarea, input[type="text"] { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
   textarea { width: 100%; box-sizing: border-box; }
   button { font: inherit; font-weight: 700; padding: .6rem 2rem; border-radius: 8px; border: none; background: #4f6ef7; color: #fff; cursor: pointer; }
   button:hover { background: #3d5ae0; }
+  button:disabled { opacity: .5; cursor: default; }
+  .waiting { text-align: center; margin-top: 4rem; opacity: .85; }
+  .error { color: #e5484d; font-weight: 700; }
 </style>
 </head>
 <body>
-<h1>質問への回答 (${questions.length}問)</h1>
-<form method="POST" action="/submit">
-${blocks}
-<button type="button" id="submit-btn">回答を送信</button>
-</form>
+<main id="host">${inner}</main>
 <script>
-  // Focusing an inline text field checks its radio/checkbox automatically
-  document.querySelectorAll('.inline-text').forEach(t => {
-    t.addEventListener('focus', () => {
-      const input = t.closest('label').querySelector('input[type=radio],input[type=checkbox]');
-      if (input) input.checked = true;
-    });
-  });
-  const form = document.querySelector('form');
-  // Enter must never submit: confirming an IME conversion (Japanese input)
-  // fires a keydown that would otherwise trigger implicit form submission.
-  // Only the send button submits.
-  form.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') e.preventDefault();
-  });
+  const host = document.getElementById('host');
+
+  function showWaiting(extra) {
+    host.innerHTML = ${JSON.stringify(WAITING_HTML)};
+    if (extra) {
+      const p = document.createElement('p');
+      p.className = 'error';
+      p.textContent = extra;
+      host.querySelector('.waiting').appendChild(p);
+    }
+  }
+
   // Block submission while a selected option's required text is empty
-  function validate() {
+  function validate(form) {
     let firstMissing = null;
-    document.querySelectorAll('.inline-text[data-required]').forEach(t => {
+    form.querySelectorAll('.inline-text[data-required]').forEach(t => {
       const checked = t.closest('label').querySelector('input[type=radio],input[type=checkbox]').checked;
       const missing = checked && !t.value.trim();
       t.classList.toggle('missing', missing);
@@ -115,16 +140,68 @@ ${blocks}
     }
     return true;
   }
-  // form.submit() skips the submit event, so validation lives in the click handler
-  document.getElementById('submit-btn').addEventListener('click', () => {
-    if (validate()) form.submit();
-  });
-  form.addEventListener('submit', e => {
-    if (!validate()) e.preventDefault();
-  });
+
+  async function send(form) {
+    if (!validate(form)) return;
+    const btn = form.querySelector('#submit-btn');
+    btn.disabled = true;
+    const body = new URLSearchParams(new FormData(form));
+    body.set('round', form.dataset.round);
+    let res;
+    try {
+      res = await fetch('/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body,
+      });
+    } catch {
+      btn.disabled = false;
+      return;
+    }
+    if (res.ok) showWaiting();
+    // A stale round (409) means the question was already answered or timed out
+    else if (res.status === 409) showWaiting('この質問はすでに締め切られました。');
+    else btn.disabled = false;
+  }
+
+  function bind() {
+    const form = host.querySelector('#answer-form');
+    if (!form) return;
+    // Enter must never submit: confirming an IME conversion (Japanese input)
+    // fires a keydown that would otherwise trigger submission.
+    form.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') e.preventDefault();
+    });
+    // Focusing an inline text field checks its radio/checkbox automatically
+    form.querySelectorAll('.inline-text').forEach(t => {
+      t.addEventListener('focus', () => {
+        const input = t.closest('label').querySelector('input[type=radio],input[type=checkbox]');
+        if (input) input.checked = true;
+      });
+    });
+    form.querySelector('#submit-btn').addEventListener('click', () => send(form));
+  }
+
+  // Later rounds arrive over SSE and replace the form in place, so the user
+  // keeps one tab instead of getting a fresh one opened per question.
+  async function loadRound() {
+    const res = await fetch('/form');
+    if (res.status === 204) { showWaiting(); return; }
+    host.innerHTML = await res.text();
+    bind();
+    window.focus();
+  }
+
+  bind();
+  new EventSource('/events').addEventListener('round', loadRound);
 </script>
 </body>
 </html>`;
+}
+
+/** Full page for a round. Kept as the GET / response and for tests. */
+export function renderPage(questions: Question[], roundId = 1): string {
+  return renderShell(renderForm(questions, roundId));
 }
 
 /** Decode a submitted form body into one Answer per question. */
@@ -175,54 +252,160 @@ function openBrowser(url: string): void {
   }
 }
 
+/** URL of the shared form server; empty until the first round starts. */
+export function formUrl(): string {
+  return baseUrl;
+}
+
+interface Round {
+  id: number;
+  questions: Question[];
+  resolve: (answers: Answer[]) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+// One HTTP server and one browser tab are shared by every round in the
+// process. Opening a tab costs the user ~1s of waiting and leaves clutter
+// behind, so we pay it once instead of once per question.
+let httpServer: http.Server | null = null;
+let baseUrl = "";
+const clients = new Set<http.ServerResponse>();
+let current: Round | null = null;
+const pending: Round[] = [];
+let nextRoundId = 1;
+
+function broadcast(): void {
+  for (const res of clients) res.write("event: round\ndata: 1\n\n");
+}
+
+/** Show the current round: reuse a live tab if there is one, else open one. */
+function present(): void {
+  if (clients.size > 0) {
+    broadcast();
+    return;
+  }
+  console.error(`[ask-user-question] Answer form: ${baseUrl}`);
+  openBrowser(baseUrl);
+}
+
+/** Move on to the next queued round, if any. */
+function advance(): void {
+  if (current || pending.length === 0) return;
+  current = pending.shift()!;
+  present();
+}
+
+function settle(round: Round, answers: Answer[] | null, error?: Error): void {
+  clearTimeout(round.timer);
+  if (current?.id === round.id) current = null;
+  else {
+    const i = pending.indexOf(round);
+    if (i >= 0) pending.splice(i, 1);
+  }
+  if (answers) round.resolve(answers);
+  else round.reject(error!);
+  advance();
+}
+
+function handle(req: http.IncomingMessage, res: http.ServerResponse): void {
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      current ? renderPage(current.questions, current.id) : renderShell(WAITING_HTML)
+    );
+    return;
+  }
+  if (req.method === "GET" && req.url === "/form") {
+    if (!current) {
+      res.writeHead(204).end();
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(renderForm(current.questions, current.id));
+    return;
+  }
+  if (req.method === "GET" && req.url === "/events") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(": connected\n\n");
+    clients.add(res);
+    // Comment frames keep proxies and the browser from dropping an idle stream
+    const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+    req.on("close", () => {
+      clearInterval(ping);
+      clients.delete(res);
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/submit") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const params = new URLSearchParams(body);
+      const round = current;
+      // A tab left open on an already-answered or timed-out round
+      if (!round || params.get("round") !== String(round.id)) {
+        res.writeHead(409).end();
+        return;
+      }
+      res.writeHead(200).end();
+      settle(round, decodeAnswers(round.questions, params));
+    });
+    return;
+  }
+  res.writeHead(404).end("Not Found");
+}
+
+function ensureServer(): Promise<void> {
+  if (httpServer) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(handle);
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      baseUrl = `http://127.0.0.1:${port}/`;
+      httpServer = server;
+      // Never hold the process open on the form's account
+      server.unref();
+      resolve();
+    });
+  });
+}
+
 /**
- * Serve the answer form on localhost, open the browser, and resolve
- * once the user submits (or reject on timeout).
+ * Present the questions in the shared browser tab and resolve once the user
+ * submits (or reject on timeout). Concurrent calls are queued and shown in
+ * turn, since there is only one tab.
  */
-export function collectAnswers(
+export async function collectAnswers(
   questions: Question[],
   timeoutMs: number
 ): Promise<Answer[]> {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      if (req.method === "GET" && req.url === "/") {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(renderPage(questions));
-        return;
-      }
-      if (req.method === "POST" && req.url === "/submit") {
-        let body = "";
-        req.on("data", (c) => (body += c));
-        req.on("end", () => {
-          const answers = decodeAnswers(questions, new URLSearchParams(body));
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(
-            `<!doctype html><html lang="ja"><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;margin-top:4rem"><h1>回答を送信しました</h1><p>このタブは閉じて構いません。</p></body></html>`
-          );
-          clearTimeout(timer);
-          server.close();
-          resolve(answers);
-        });
-        return;
-      }
-      res.writeHead(404);
-      res.end("Not Found");
-    });
-
-    const timer = setTimeout(() => {
-      server.close();
-      reject(
-        new Error(
-          `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for the user to answer.`
-        )
-      );
-    }, timeoutMs);
-
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as AddressInfo;
-      const url = `http://127.0.0.1:${port}/`;
-      console.error(`[ask-user-question] Answer form: ${url}`);
-      openBrowser(url);
-    });
+  await ensureServer();
+  return new Promise<Answer[]>((resolve, reject) => {
+    const round: Round = {
+      id: nextRoundId++,
+      questions,
+      resolve,
+      reject,
+      timer: setTimeout(() => {
+        // Drop the stale form from any open tab
+        const wasCurrent = current?.id === round.id;
+        settle(
+          round,
+          null,
+          new Error(
+            `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for the user to answer.`
+          )
+        );
+        if (wasCurrent && !current) broadcast();
+      }, timeoutMs),
+    };
+    pending.push(round);
+    advance();
   });
 }

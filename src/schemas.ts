@@ -12,6 +12,14 @@ export const OptionSchema = z
       .max(2000, "Option description must not exceed 2000 characters")
       .optional()
       .describe("Optional supplementary explanation shown under the label."),
+    recommended: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Pre-select this option so the user can confirm with a single click. " +
+          "Mark your best guess. In a single-select question only the first " +
+          "recommended option is pre-selected."
+      ),
     textInput: z
       .object({
         placeholder: z
