@@ -1,4 +1,5 @@
 import test from "node:test";
+import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import {
@@ -293,3 +294,35 @@ async function waitForUrl(): Promise<string> {
   }
   throw new Error("server did not start");
 }
+
+test("フォームサーバーはプロセスの終了を妨げない", async () => {
+  // 常駐サーバーは回答待ちが無くなってもリスンし続けるので、イベントループを
+  // 保持しないことを実プロセスで確かめる。保持していればこの子プロセスは
+  // 終了せずタイムアウトする。
+  const script = `
+    process.env.ASK_USER_QUESTION_NO_OPEN = "1";
+    const { collectAnswers, formUrl } = await import(${JSON.stringify(
+      new URL("./webui.js", import.meta.url).href
+    )});
+    const p = collectAnswers([{ question: "Q?", multiSelect: false, options: [{ label: "A" }] }], 30000);
+    while (!formUrl()) await new Promise((r) => setTimeout(r, 5));
+    const round = /data-round="(\\d+)"/.exec(await (await fetch(formUrl())).text())[1];
+    await fetch(new URL("/submit", formUrl()), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "round=" + round + "&q0=0",
+    });
+    await p;
+    // process.exit() は呼ばない。サーバーが握っていればここでハングする。
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+    stdio: "ignore",
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    child.on("exit", (code) => resolve(code));
+  });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+  const code = await exited;
+  clearTimeout(timer);
+  assert.equal(code, 0, "回答後もプロセスが終了しない（サーバーがイベントループを保持している）");
+});
