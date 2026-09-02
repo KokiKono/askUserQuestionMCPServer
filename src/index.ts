@@ -11,58 +11,52 @@ import {
   AskUserQuestionsInputSchema,
   AskUserQuestionsOutputSchema,
 } from "./schemas.js";
+import type { Answer } from "./schemas.js";
 import { collectAnswers } from "./webui.js";
+
+/** Compact, loss-free rendering of the answers for the text content block. */
+function digestAnswers(answers: Answer[]): string {
+  return answers
+    .map((a) => {
+      const picked = [...a.answers];
+      if (a.other !== undefined) picked.push(`Other: ${a.other}`);
+      const lines = [
+        `Q: ${a.question}`,
+        `A: ${picked.length > 0 ? picked.join(" / ") : "(no answer)"}`,
+      ];
+      for (const [label, text] of Object.entries(a.optionTexts ?? {})) {
+        lines.push(`   ${label} -> ${text}`);
+      }
+      return lines.join("\n");
+    })
+    .join("\n");
+}
 
 const server = new McpServer({
   name: "ask-user-question-mcp-server",
-  version: "0.2.0",
+  version: "0.4.0",
 });
 
 server.registerTool(
   "ask_user_questions",
   {
     title: "Ask the user questions (unlimited)",
-    description: `Present any number of questions to the user in a local web form and wait for their answers.
+    description: `Ask the user any number of questions in a local browser form and block until they answer.
 
-Use this instead of the built-in AskUserQuestion when you need more than 4 questions or more than 4 options per question. The tool opens a browser form on the user's machine, blocks until they submit, and returns their answers.
+Prefer the built-in AskUserQuestion for up to 4 questions with up to 4 short options each. Use this tool when you exceed either limit, or when an answer needs a follow-up detail.
 
 Args:
-  - questions (array, required): Questions in display order. Each question:
-      - question (string): The question text.
-      - description (string, optional): Supplementary context shown under the question.
-      - multiSelect (boolean, default false): Allow selecting multiple options.
-      - options (array, default []): Choices as { label, description?, textInput? }.
-        Omit to make the question free-text (a textarea). Choice questions
-        automatically get an "Other (free text)" option.
-        textInput ({ placeholder?, required? }) attaches a free-text field that is
-        shown when the option is selected — use it to collect follow-up details in
-        the SAME call instead of asking a separate question later (e.g. option
-        "Escalate" with textInput { placeholder: "Source URL", required: true }).
-  - timeoutSeconds (integer, default 600): How long to wait for the user.
+  - questions (required): [{ question, description?, multiSelect?, options? }] in display order.
+      options: [{ label, description?, recommended?, textInput? }]
+        - Omit options entirely for a free-text question. An "Other" choice is always added.
+        - recommended: pre-select your best guess so the user can confirm in one click.
+        - textInput ({ placeholder?, required? }): a free-text field shown when that option is
+          selected. Use it to collect the detail now instead of asking again later.
+  - timeoutSeconds (default 600).
 
-Returns (structured):
-  {
-    "answers": [
-      {
-        "question": string,     // The question text, same order as input
-        "answers": string[],    // Selected labels, or [free-text answer]; [] if unanswered
-        "other": string,        // Present only if the user chose "Other"
-        "optionTexts": object   // Present only if selected options had textInput:
-                                // { "<option label>": "<entered text>" }
-      }
-    ]
-  }
-
-Examples:
-  - Use when: You have 6 design decisions to confirm at once -> one call with 6 questions
-  - Use when: A choice has 10 candidate libraries -> one question with 10 options
-  - Use when: An answer needs a follow-up detail -> attach textInput to that option
-    instead of a second round-trip
-  - Don't use when: A single question with <=4 options suffices (prefer the built-in tool)
-
-Error handling:
-  - Returns an error if the user does not submit within timeoutSeconds. The user may
-    have missed the browser tab; consider asking again with fewer questions or a longer timeout.`,
+Returns { answers: [{ question, answers[], other?, optionTexts? }] }, one entry per question in
+input order. answers is [] if the user skipped it. On timeout, returns an error: the user may have
+missed the tab, so either retry with a longer timeout or proceed on a stated assumption.`,
     inputSchema: AskUserQuestionsInputSchema,
     outputSchema: AskUserQuestionsOutputSchema,
     annotations: {
@@ -77,7 +71,9 @@ Error handling:
       const answers = await collectAnswers(questions, timeoutSeconds * 1000);
       const output = { answers };
       return {
-        content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+        // A digest rather than the JSON: clients that read structuredContent
+        // would otherwise be handed every answer twice.
+        content: [{ type: "text", text: digestAnswers(answers) }],
         structuredContent: output,
       };
     } catch (error) {
